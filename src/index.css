@@ -1,0 +1,270 @@
+@import "tailwindcss";
+
+/* Smooth scrolling for the entire page */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom animation classes for better performance */
+.animate-fade-in-up {
+  animation: fadeInUp 0.8s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.6s ease-out forwards;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Ensure smooth transitions */
+* {
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Glass effect styles */
+.backdrop-filter {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.backdrop-blur-sm {
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.backdrop-blur-md {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.backdrop-blur-lg {
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.backdrop-blur-xl {
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+/* Enhanced glass effect for profile popup */
+.fixed.inset-0.flex.items-center.justify-center.z-50 {
+  background-color: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.profile-popup-container {
+  background-color: rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+/* Ensure profile images in sidebar have no background */
+.profile-popup-container img,
+.profile-popup-container div {
+  background: transparent !important;
+}
+
+/* Remove any button backgrounds around profile images */
+button:has(.profile-image) {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+/* Mobile responsive improvements */
+@media (max-width: 1024px) {
+  .main-content-area {
+    padding-top: 5rem !important;
+  }
+  
+  .friends-list-item {
+    padding: 0.75rem !important;
+  }
+  
+  /* Ensure mobile sidebar is full height */
+  .mobile-sidebar {
+    height: 100vh !important;
+    padding-top: 1rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .chat-animation {
+    width: 12rem !important;
+    height: 12rem !important;
+  }
+  
+  /* Mobile chat window adjustments */
+  .chat-window-mobile {
+    height: calc(100vh - 4rem) !important;
+  }
+  
+  /* Mobile profile image sizes */
+  .profile-image-mobile {
+    width: 2rem !important;
+    height: 2rem !important;
+  }
+}
+
+/* Smooth transitions for mobile sidebar */
+.mobile-sidebar-transition {
+  transition: transform 0.3s ease-in-out;
+}
+
+/* Ensure proper z-index layering */
+.mobile-header {
+  z-index: 60;
+}
+
+.mobile-sidebar-overlay {
+  z-index: 50;
+}
+
+.mobile-sidebar {
+  z-index: 55;
+}
+
+/* Chat animation styles */
+.chat-animation {
+  width: 100%;
+  max-width: 500px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.message-bubble {
+  max-width: 80%;
+  padding: 10px 15px;
+  border-radius: 18px;
+  margin-bottom: 10px;
+  position: relative;
+  word-wrap: break-word;
+  opacity: 0;
+}
+
+.left-bubble {
+  background-color: #f0f0f0;
+  border-bottom-left-radius: 5px;
+  align-self: flex-start;
+  margin-right: auto;
+}
+
+.right-bubble {
+  background-color: #3b82f6;
+  color: white;
+  border-bottom-right-radius: 5px;
+  align-self: flex-end;
+  margin-left: auto;
+}
+
+@keyframes bubbleIn {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Animation classes for each bubble */
+.animate-bubble-1 {
+  animation: bubbleIn 0.5s ease-in-out forwards;
+  animation-delay: 0.2s;
+}
+
+.animate-bubble-2 {
+  animation: bubbleIn 0.5s ease-in-out forwards;
+  animation-delay: 1s;
+}
+
+.animate-bubble-3 {
+  animation: bubbleIn 0.5s ease-in-out forwards;
+  animation-delay: 1.8s;
+}
+
+.animate-bubble-4 {
+  animation: bubbleIn 0.5s ease-in-out forwards;
+  animation-delay: 2.6s;
+}
+
+.animate-bubble-5 {
+  animation: bubbleIn 0.5s ease-in-out forwards;
+  animation-delay: 3.4s;
+}
+
+/* Animation loop */
+@keyframes chatLoop {
+  0%, 100% {
+    opacity: 0;
+  }
+  10%, 90% {
+    opacity: 1;
+  }
+}
+
+/* Reset animation after all bubbles appear */
+@keyframes resetAnimation {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.chat-animation .message-bubble:last-child {
+  animation-name: bubbleIn, resetAnimation;
+  animation-duration: 0.5s, 0.5s;
+  animation-delay: 3.4s, 8s;
+  animation-timing-function: ease-in-out, ease-in-out;
+  animation-fill-mode: forwards, forwards;
+  animation-iteration-count: 1, 1;
+}
+/* Ensure all profile images are perfectly circular */
+.profile-image {
+  border-radius: 50% !important;
+  aspect-ratio: 1 / 1 !important;
+  object-fit: cover !important;
+  object-position: center !important;
+  background: transparent !important;
+}
+
+/* Remove any background from profile image containers */
+.profile-image-container {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* Hover effects for profile images */
+.profile-image:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+}
