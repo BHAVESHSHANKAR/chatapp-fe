@@ -17,7 +17,7 @@ class WebSocketService {
 
   connect(username, onConnected, onError) {
     this.username = username;
-    
+
     // Create STOMP client with mobile-optimized settings
     this.stompClient = new Client({
       webSocketFactory: () => new SockJS(import.meta.env.VITE_API_URL_WS, null, {
@@ -42,39 +42,36 @@ class WebSocketService {
 
     // Set up event handlers
     this.stompClient.onConnect = (frame) => {
-      console.log('✅ WebSocket connected successfully');
       this.connected = true;
       this.reconnectAttempts = 0;
-      
+
       // Subscribe to user-specific message queue immediately
       this.subscribeToUserMessages(username);
-      
+
       // Start health check for real-time reliability
       this.startHealthCheck();
-      
+
       // Update connection status
       connectionStatusService.checkStatus();
-      
+
       if (onConnected) {
         onConnected(frame);
       }
     };
 
     this.stompClient.onStompError = (frame) => {
-      console.error('❌ WebSocket STOMP error:', frame);
       this.connected = false;
       connectionStatusService.checkStatus();
-      
+
       if (onError) {
         onError(frame);
       }
     };
 
     this.stompClient.onWebSocketError = (error) => {
-      console.error('❌ WebSocket connection error:', error);
       this.connected = false;
       connectionStatusService.checkStatus();
-      
+
       if (onError) {
         onError(error);
       }
@@ -84,7 +81,7 @@ class WebSocketService {
       this.connected = false;
       this.stopHealthCheck();
       connectionStatusService.checkStatus();
-      
+
       // Auto-reconnect for real-time reliability
       if (this.reconnectAttempts < this.maxReconnectAttempts) {
         setTimeout(() => {
@@ -102,18 +99,15 @@ class WebSocketService {
 
   subscribeToUserMessages(username) {
     if (this.stompClient && this.connected) {
-      console.log(`🔔 Subscribing to messages for user: ${username}`);
-      
       // Subscribe to private messages with real-time optimized handling
       const messageSubscription = this.stompClient.subscribe(
         `/user/${username}/queue/messages`,
         (message) => {
           try {
             const chatMessage = JSON.parse(message.body);
-            console.log('📨 Received message via WebSocket:', chatMessage);
             // Process message immediately for real-time feel
             this.handleMessage('message', chatMessage);
-            
+
             // Acknowledge message receipt for reliability
             if (message.ack) {
               message.ack();
@@ -178,15 +172,15 @@ class WebSocketService {
           console.error('Cannot send empty message');
           return false;
         }
-        
+
         if (!message.senderUsername || !message.receiverUsername) {
           console.error('Missing sender or receiver username');
           return false;
         }
-        
+
         // Add timestamp for immediate processing
         message.timestamp = new Date().toISOString();
-        
+
         this.stompClient.publish({
           destination: '/app/chat.sendMessage',
           body: JSON.stringify(message),
@@ -195,7 +189,7 @@ class WebSocketService {
             'priority': '9'  // High priority for real-time messaging
           }
         });
-        
+
         return true;
       } catch (error) {
         console.error('Error sending message:', error);
@@ -215,7 +209,7 @@ class WebSocketService {
         type: isTyping ? 'TYPING' : 'STOP_TYPING',
         timestamp: new Date().toISOString()
       };
-      
+
       this.stompClient.publish({
         destination: '/app/chat.typing',
         body: JSON.stringify(typingMessage)
@@ -255,17 +249,17 @@ class WebSocketService {
 
   disconnect() {
     this.stopHealthCheck();
-    
+
     if (this.stompClient) {
       // Unsubscribe from all subscriptions
       this.subscriptions.forEach((subscription) => {
         subscription.unsubscribe();
       });
       this.subscriptions.clear();
-      
+
       // Deactivate the client
       this.stompClient.deactivate();
-      
+
       this.connected = false;
       this.stompClient = null;
     }

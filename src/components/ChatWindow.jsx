@@ -5,7 +5,7 @@ import connectionStatusService from '../services/connectionStatus';
 import userActivityService from '../services/userActivity';
 import ProfileImage from './ProfileImage';
 import TypingIndicator from './TypingIndicator';
-import { getRelativeTime, getActivityStatus, formatMessageTime } from '../utils/timeUtils';
+import { getRelativeTime, formatMessageTime } from '../utils/timeUtils';
 
 const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
   const [messages, setMessages] = useState([]);
@@ -128,14 +128,27 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
     }
   }, [selectedFriend]);
 
+  // Create stable references for message handlers
+  const currentUserRef = useRef(currentUser);
+  const selectedFriendRef = useRef(selectedFriend);
+  
+  // Update refs when values change
   useEffect(() => {
-    // Set up WebSocket message handlers with optimized processing
+    currentUserRef.current = currentUser;
+    selectedFriendRef.current = selectedFriend;
+  }, [currentUser, selectedFriend]);
+
+  useEffect(() => {
+    // Set up WebSocket message handlers with stable references
     const handleNewMessage = (message) => {
+      const currentUserCurrent = currentUserRef.current;
+      const selectedFriendCurrent = selectedFriendRef.current;
+      
       // Only process messages between current user and selected friend
       if (
-        currentUser && selectedFriend &&
-        ((message.senderId === currentUser.id && message.receiverId === selectedFriend.id) ||
-        (message.senderId === selectedFriend.id && message.receiverId === currentUser.id))
+        currentUserCurrent && selectedFriendCurrent &&
+        ((message.senderId === currentUserCurrent.id && message.receiverId === selectedFriendCurrent.id) ||
+        (message.senderId === selectedFriendCurrent.id && message.receiverId === currentUserCurrent.id))
       ) {
         setMessages(prev => {
           // Check if message already exists to prevent duplicates
@@ -165,8 +178,8 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
         });
         
         // Mark as read if message is from friend (immediate for real-time feel)
-        if (selectedFriend && currentUser && message.senderId === selectedFriend.id) {
-          chatService.markAsRead(selectedFriend.id, currentUser.id).catch(() => {
+        if (selectedFriendCurrent && currentUserCurrent && message.senderId === selectedFriendCurrent.id) {
+          chatService.markAsRead(selectedFriendCurrent.id, currentUserCurrent.id).catch(() => {
             // Silent fail - don't disrupt real-time messaging
           });
         }
@@ -174,11 +187,14 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
     };
 
     const handleMessageUpdate = (message) => {
+      const currentUserCurrent = currentUserRef.current;
+      const selectedFriendCurrent = selectedFriendRef.current;
+      
       // Handle database sync updates - only for current conversation
       if (
-        currentUser && selectedFriend &&
-        ((message.senderId === currentUser.id && message.receiverId === selectedFriend.id) ||
-        (message.senderId === selectedFriend.id && message.receiverId === currentUser.id))
+        currentUserCurrent && selectedFriendCurrent &&
+        ((message.senderId === currentUserCurrent.id && message.receiverId === selectedFriendCurrent.id) ||
+        (message.senderId === selectedFriendCurrent.id && message.receiverId === currentUserCurrent.id))
       ) {
         setMessages(prev => {
           const existingIndex = prev.findIndex(m => 
@@ -200,7 +216,8 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
     };
 
     const handleTyping = (typingMessage) => {
-      if (selectedFriend && typingMessage.senderUsername === selectedFriend.username) {
+      const selectedFriendCurrent = selectedFriendRef.current;
+      if (selectedFriendCurrent && typingMessage.senderUsername === selectedFriendCurrent.username) {
         const isTypingNow = typingMessage.type === 'TYPING';
         setFriendTyping(isTypingNow);
         
@@ -239,7 +256,7 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
       webSocketService.removeMessageHandler('typing', handleTyping);
       webSocketService.removeMessageHandler('error', handleError);
     };
-  }, [currentUser?.id, selectedFriend?.id]); // Add dependencies to ensure handlers update
+  }, []); // Remove dependencies to prevent handler recreation
 
   const loadMessages = async () => {
     try {
@@ -638,21 +655,21 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
         {/* Connection Status and Typing Indicator */}
         <div className="flex items-center justify-between mt-1">
           {connectionStatus !== 'HEALTHY' && (
-            <p className={`text-xs flex items-center ${
+            <div className={`text-xs flex items-center ${
               connectionStatus === 'CHECKING' ? 'text-yellow-500' : 'text-red-500'
             }`}>
               <div className={`w-2 h-2 rounded-full mr-1 ${
                 connectionStatus === 'CHECKING' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
               }`}></div>
               {connectionStatus === 'CHECKING' ? 'Connecting...' : 'Connection lost. Trying to reconnect...'}
-            </p>
+            </div>
           )}
           
           {isTyping && connectionStatus === 'HEALTHY' && (
-            <p className="text-xs text-gray-500 flex items-center">
+            <div className="text-xs text-gray-500 flex items-center">
               <span className="animate-pulse mr-1">●</span>
               You are typing...
-            </p>
+            </div>
           )}
         </div>
       </div>
