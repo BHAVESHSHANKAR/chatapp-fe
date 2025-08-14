@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { chatService } from '../services/api';
 import webSocketService from '../services/websocket';
 import connectionStatusService from '../services/connectionStatus';
+import userActivityService from '../services/userActivity';
 import ProfileImage from './ProfileImage';
+import TypingIndicator from './TypingIndicator';
+import { getRelativeTime, getActivityStatus, formatMessageTime } from '../utils/timeUtils';
 
 const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
   const [messages, setMessages] = useState([]);
@@ -11,111 +14,179 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
   const [friendTyping, setFriendTyping] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('CHECKING');
+  const [connectionStatus, setConnectionStatus] = useState('HEALTHY'); // Start optimistic
+  const [userStatus, setUserStatus] = useState({ status: 'offline', lastSeen: null });
 
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const inputRef = useRef(null);
+  const activityUpdateRef = useRef(null);
 
   useEffect(() => {
     if (selectedFriend && currentUser) {
       // Clear previous messages and load fresh
       setMessages([]);
       setSending(false);
+      setFriendTyping(false);
+      setIsTyping(false);
+      
       loadMessages();
       markMessagesAsRead();
+      
+      // Get user activity status
+      const status = userActivityService.getUserStatus(selectedFriend.id);
+      setUserStatus(status);
+      
+      // Focus input field when chat opens
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
     }
 
     // Monitor connection status
     const handleStatusChange = (status) => {
-      setConnectionStatus(status.overall);
+      // Use WebSocket connection status if available, otherwise use overall status
+      const wsConnected = webSocketService.isConnected();
+      setConnectionStatus(wsConnected ? 'HEALTHY' : (status.overall || 'CHECKING'));
     };
 
     connectionStatusService.addListener(handleStatusChange);
+    
+    // Also check WebSocket status directly
+    const checkWebSocketStatus = () => {
+      const wsConnected = webSocketService.isConnected();
+      setConnectionStatus(wsConnected ? 'HEALTHY' : 'CHECKING');
+    };
+    
+    // Check WebSocket status periodically
+    const wsCheckInterval = setInterval(checkWebSocketStatus, 5000);
+    
     return () => {
       connectionStatusService.removeListener(handleStatusChange);
+      clearInterval(wsCheckInterval);
+      
+      // Clear timeouts
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      if (activityUpdateRef.current) {
+        clearInterval(activityUpdateRef.current);
+      }
     };
   }, [selectedFriend, currentUser]);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, friendTyping]);
+
+  // Listen for user activity status changes
+  useEffect(() => {
+    if (selectedFriend) {
+      const handleStatusChange = (statusData) => {
+        setUserStatus(statusData);
+      };
+
+      userActivityService.addStatusListener(selectedFriend.id, handleStatusChange);
+
+      return () => {
+        userActivityService.removeStatusListener(selectedFriend.id, handleStatusChange);
+      };
+    }
+  }, [selectedFriend]);
 
   useEffect(() => {
-    // Set up WebSocket message handlers
+    // Set up WebSocket message handlers with optimized processing
     const handleNewMessage = (message) => {
-      // Only add message if it's between current user and selected friend
+      // Only process messages between current user and selected friend
       if (
         (message.senderId === currentUser.id && message.receiverId === selectedFriend.id) ||
         (message.senderId === selectedFriend.id && message.receiverId === currentUser.id)
       ) {
         setMessages(prev => {
-          // If it's our own message, replace the optimistic message
-          if (message.senderId === currentUser.id) {
-            const updatedMessages = prev.map(msg => {
-              if (msg.pending && msg.content === message.content && msg.senderId === currentUser.id) {
-                // Replace optimistic message with real message
-                return {
-                  ...message,
-                  timestamp: new Date(message.timestamp),
-                  pending: false
-                };
-              }
-              return msg;
-            });
-            
-            // If no optimistic message was found, add the new message
-            const hasOptimistic = prev.some(msg => 
-              msg.pending && msg.content === message.content && msg.senderId === currentUser.id
-            );
-            
-            if (!hasOptimistic) {
-              const exists = prev.some(m => m.id === message.id);
-              if (!exists) {
-                return [...prev, { ...message, timestamp: new Date(message.timestamp) }];
-              }
-            }
-            
+          // Check if message already exists to prevent duplicates
+          const existingIndex = prev.findIndex(m => 
+            (m.id && m.id === message.id) || 
+            (m.tempId && m.content === message.content && m.senderId === message.senderId)
+          );
+          
+          if (existingIndex !== -1) {
+            // Update existing message (replace optimistic with real)
+            const updatedMessages = [...prev];
+            updatedMessages[existingIndex] = {
+              ...message,
+              timestamp: new Date(message.timestamp),
+              pending: false
+            };
             setSending(false);
             return updatedMessages;
           } else {
-            // For friend's messages, just add if not exists
-            const exists = prev.some(m => m.id === message.id);
-            if (!exists) {
-              return [...prev, { ...message, timestamp: new Date(message.timestamp) }];
-            }
+            // Add new message
+            return [...prev, { 
+              ...message, 
+              timestamp: new Date(message.timestamp),
+              pending: false 
+            }];
           }
-          return prev;
         });
         
-        // Mark as read if message is from friend
+        // Mark as read if message is from friend (debounced)
         if (message.senderId === selectedFriend.id) {
-          chatService.markAsRead(selectedFriend.id, currentUser.id);
+          setTimeout(() => {
+            chatService.markAsRead(selectedFriend.id, currentUser.id).catch(console.error);
+          }, 100);
         }
       }
     };
 
+    const handleMessageUpdate = (message) => {
+      // Handle database sync updates
+      setMessages(prev => {
+        const existingIndex = prev.findIndex(m => 
+          m.tempId && m.content === message.content && m.senderId === message.senderId
+        );
+        
+        if (existingIndex !== -1) {
+          const updatedMessages = [...prev];
+          updatedMessages[existingIndex] = {
+            ...message,
+            timestamp: new Date(message.timestamp),
+            pending: false
+          };
+          return updatedMessages;
+        }
+        return prev;
+      });
+    };
+
     const handleTyping = (typingMessage) => {
       if (typingMessage.senderUsername === selectedFriend.username) {
-        setFriendTyping(typingMessage.type === 'TYPING');
+        const isTypingNow = typingMessage.type === 'TYPING';
+        setFriendTyping(isTypingNow);
         
-        // Clear typing indicator after 3 seconds
-        if (typingMessage.type === 'TYPING') {
+        // Update online status when user is typing
+        if (isTypingNow) {
+          setUserStatus({ status: 'online', lastSeen: new Date() });
+        }
+        
+        // Clear typing indicator after 3 seconds of inactivity
+        if (isTypingNow) {
           setTimeout(() => setFriendTyping(false), 3000);
         }
       }
     };
 
     const handleError = (errorMessage) => {
-      console.error('Chat error:', errorMessage);
-      // You could show a toast notification here
+      // Silent error handling - could show toast notification here
     };
 
     webSocketService.addMessageHandler('message', handleNewMessage);
+    webSocketService.addMessageHandler('message-update', handleMessageUpdate);
     webSocketService.addMessageHandler('typing', handleTyping);
     webSocketService.addMessageHandler('error', handleError);
 
     return () => {
       webSocketService.removeMessageHandler('message', handleNewMessage);
+      webSocketService.removeMessageHandler('message-update', handleMessageUpdate);
       webSocketService.removeMessageHandler('typing', handleTyping);
       webSocketService.removeMessageHandler('error', handleError);
     };
@@ -124,10 +195,8 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
   const loadMessages = async () => {
     try {
       setLoading(true);
-      console.log('Loading messages for:', { currentUser, selectedFriend });
       
       if (!currentUser?.id || !selectedFriend?.id) {
-        console.error('Missing user IDs:', { currentUser, selectedFriend });
         return;
       }
       
@@ -140,7 +209,7 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
       }));
       setMessages(processedMessages);
     } catch (error) {
-      console.error('Error loading messages:', error);
+      // Silent error handling
     } finally {
       setLoading(false);
     }
@@ -148,26 +217,23 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
 
   const markMessagesAsRead = async () => {
     try {
-      console.log('Marking messages as read for:', { currentUser, selectedFriend });
-      
       if (!currentUser?.id || !selectedFriend?.id) {
-        console.error('Missing user IDs for mark as read:', { currentUser, selectedFriend });
         return;
       }
       
       await chatService.markAsRead(selectedFriend.id, currentUser.id);
     } catch (error) {
-      console.error('Error marking messages as read:', error);
+      // Silent error handling
     }
   };
 
-  const sendMessage = async () => {
-    if (!newMessage.trim() || sending) return;
+  const sendMessage = useCallback(async () => {
+    if (!newMessage.trim() || sending || !currentUser || !selectedFriend) return;
 
     const messageContent = newMessage.trim();
-    const tempId = `temp_${Date.now()}`;
+    const tempId = `temp_${Date.now()}_${Math.random()}`;
     
-    // Create optimistic message
+    // Create optimistic message for instant UI update
     const optimisticMessage = {
       id: tempId,
       content: messageContent,
@@ -182,7 +248,7 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
       tempId: tempId
     };
 
-    // Add optimistic message immediately to messages array
+    // Add optimistic message immediately for instant feedback
     setMessages(prev => [...prev, optimisticMessage]);
     setNewMessage('');
     setSending(true);
@@ -196,28 +262,37 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
           senderId: currentUser.id,
           receiverId: selectedFriend.id,
           messageType: 'TEXT',
-          type: 'CHAT'
+          type: 'CHAT',
+          tempId: tempId
         };
 
-        webSocketService.sendMessage(message);
+        const success = webSocketService.sendMessage(message);
         
-        // Set timeout to remove pending state if no response
-        setTimeout(() => {
-          setMessages(prev => prev.map(msg => 
-            msg.tempId === tempId ? { ...msg, pending: false } : msg
-          ));
-          setSending(false);
-        }, 3000);
+        if (success) {
+          // Set shorter timeout for better UX
+          setTimeout(() => {
+            setMessages(prev => prev.map(msg => 
+              msg.tempId === tempId ? { ...msg, pending: false } : msg
+            ));
+            setSending(false);
+          }, 1000);
+        } else {
+          throw new Error('Failed to send via WebSocket');
+        }
         
       } else {
         throw new Error('WebSocket not connected');
       }
     } catch (error) {
-      console.error('Failed to send message:', error);
       // Remove optimistic message on error
       setMessages(prev => prev.filter(msg => msg.tempId !== tempId));
       setSending(false);
-      alert('Failed to send message. Please check your connection.');
+      
+      // Show user-friendly error
+      const errorMsg = connectionStatus === 'HEALTHY' ? 
+        'Failed to send message. Please try again.' : 
+        'Connection lost. Please wait for reconnection.';
+      alert(errorMsg);
     }
     
     // Stop typing indicator
@@ -225,22 +300,33 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
       webSocketService.sendTypingIndicator(currentUser.username, selectedFriend.username, false);
       setIsTyping(false);
     }
-  };
+  }, [newMessage, sending, currentUser, selectedFriend, connectionStatus, isTyping]);
 
-  const handleKeyPress = (e) => {
+  const handleKeyPress = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
+    } else if (e.key === 'Escape') {
+      // Clear input on escape
+      setNewMessage('');
+      if (isTyping) {
+        setIsTyping(false);
+        webSocketService.sendTypingIndicator(currentUser.username, selectedFriend.username, false);
+      }
     }
-  };
+  }, [sendMessage, isTyping, currentUser, selectedFriend]);
 
-  const handleInputChange = (e) => {
-    setNewMessage(e.target.value);
+  const handleInputChange = useCallback((e) => {
+    const value = e.target.value;
+    setNewMessage(value);
     
     // Handle typing indicator
-    if (!isTyping && e.target.value.trim()) {
+    if (!isTyping && value.trim()) {
       setIsTyping(true);
       webSocketService.sendTypingIndicator(currentUser.username, selectedFriend.username, true);
+    } else if (isTyping && !value.trim()) {
+      setIsTyping(false);
+      webSocketService.sendTypingIndicator(currentUser.username, selectedFriend.username, false);
     }
     
     // Clear existing timeout
@@ -249,21 +335,35 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
     }
     
     // Set new timeout to stop typing indicator
-    typingTimeoutRef.current = setTimeout(() => {
-      if (isTyping) {
-        setIsTyping(false);
-        webSocketService.sendTypingIndicator(currentUser.username, selectedFriend.username, false);
-      }
-    }, 1000);
-  };
+    if (value.trim()) {
+      typingTimeoutRef.current = setTimeout(() => {
+        if (isTyping) {
+          setIsTyping(false);
+          webSocketService.sendTypingIndicator(currentUser.username, selectedFriend.username, false);
+        }
+      }, 1500);
+    }
+  }, [isTyping, currentUser, selectedFriend]);
+
+  const handleInputFocus = useCallback(() => {
+    // Mark messages as read when user focuses on input
+    markMessagesAsRead();
+  }, [currentUser, selectedFriend]);
+
+  const handleInputBlur = useCallback(() => {
+    // Stop typing indicator when input loses focus
+    if (isTyping) {
+      setIsTyping(false);
+      webSocketService.sendTypingIndicator(currentUser.username, selectedFriend.username, false);
+    }
+  }, [isTyping, currentUser, selectedFriend]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const formatTime = (timestamp) => {
-    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return formatMessageTime(timestamp);
   };
 
   const formatDate = (timestamp) => {
@@ -277,7 +377,7 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
     } else if (date.toDateString() === yesterday.toDateString()) {
       return 'Yesterday';
     } else {
-      return date.toLocaleDateString();
+      return date.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
     }
   };
 
@@ -317,22 +417,21 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
               ) : (
                 <>
                   <span className={`w-2 h-2 rounded-full mr-1 ${
-                    connectionStatus === 'HEALTHY' ? 'bg-green-400' : 
-                    connectionStatus === 'CHECKING' ? 'bg-yellow-400' : 'bg-red-400'
+                    userStatus.status === 'online' && connectionStatus === 'HEALTHY' ? 'bg-green-400' : 'bg-gray-400'
                   }`}></span>
-                  {connectionStatus === 'HEALTHY' ? 'Online' : 
-                   connectionStatus === 'CHECKING' ? 'Connecting...' : 'Offline'}
+                  {connectionStatus === 'HEALTHY' ? 
+                    (userStatus.status === 'online' ? 'online' : 'offline') : 
+                    connectionStatus === 'CHECKING' ? 'connecting...' : 'offline'}
                 </>
               )}
             </p>
           </div>
         </div>
         <div className="flex items-center space-x-2">
-          {/* Connection Status Indicator */}
+          {/* Activity Status Indicator */}
           <div className={`w-3 h-3 rounded-full ${
-            connectionStatus === 'HEALTHY' ? 'bg-green-400' : 
-            connectionStatus === 'CHECKING' ? 'bg-yellow-400 animate-pulse' : 'bg-red-400'
-          }`} title={`Connection: ${connectionStatus}`}></div>
+            userStatus.status === 'online' && connectionStatus === 'HEALTHY' ? 'bg-green-400' : 'bg-gray-400'
+          }`} title={userStatus.status === 'online' ? 'Online' : 'Offline'}></div>
           
           <button
             onClick={onClose}
@@ -382,24 +481,30 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
                       />
                     </div>
                   )}
-                  <div className={`max-w-[70%] px-3 py-2 rounded-2xl ${
+                  <div className={`max-w-[70%] px-3 py-2 rounded-2xl transition-all duration-300 ${
                     isOwnMessage 
                       ? message.pending 
-                        ? 'bg-gradient-to-r from-[#0F2027] to-[#2c5364] text-white opacity-70 rounded-br-md' 
-                        : 'bg-gradient-to-r from-[#0F2027] to-[#2c5364] text-white rounded-br-md'
-                      : 'bg-gray-100 text-gray-800 rounded-bl-md'
-                  } shadow-sm`}>
+                        ? 'bg-gradient-to-r from-[#0F2027] to-[#2c5364] text-white opacity-70 rounded-br-md transform scale-95' 
+                        : 'bg-gradient-to-r from-[#0F2027] to-[#2c5364] text-white rounded-br-md transform scale-100'
+                      : 'bg-gray-100 text-gray-800 rounded-bl-md hover:bg-gray-200'
+                  } shadow-sm hover:shadow-md`}>
                     <p className="text-sm leading-relaxed break-words">{message.content}</p>
                     <div className={`flex items-center justify-between mt-1 ${
                       isOwnMessage ? 'text-gray-200' : 'text-gray-500'
                     }`}>
-                      <span className="text-xs">{formatTime(message.timestamp)}</span>
+                      <span className="text-xs" title={getRelativeTime(message.timestamp)}>
+                        {formatTime(message.timestamp)}
+                      </span>
                       {isOwnMessage && (
                         <span className="ml-2 flex items-center">
                           {message.pending ? (
                             <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin"></div>
                           ) : (
-                            <span className="text-xs">{message.isRead ? '✓✓' : '✓'}</span>
+                            <span className={`text-xs transition-colors duration-200 ${
+                              message.isRead ? 'text-blue-300' : 'text-gray-300'
+                            }`}>
+                              {message.isRead ? '✓✓' : '✓'}
+                            </span>
                           )}
                         </span>
                       )}
@@ -421,6 +526,10 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
             );
           })
         )}
+        
+        {/* Typing Indicator */}
+        <TypingIndicator username={selectedFriend.username} isVisible={friendTyping} />
+        
         <div ref={messagesEndRef} />
       </div>
 
@@ -428,13 +537,18 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
       <div className="p-4 border-t">
         <div className="flex items-center space-x-2">
           <input
+            ref={inputRef}
             type="text"
             value={newMessage}
             onChange={handleInputChange}
-            onKeyPress={handleKeyPress}
-            placeholder="Type a message..."
-            className="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#2c5364] focus:border-transparent"
-            disabled={!webSocketService.isConnected()}
+            onKeyDown={handleKeyPress}
+            onFocus={handleInputFocus}
+            onBlur={handleInputBlur}
+            placeholder={connectionStatus === 'HEALTHY' ? "Type a message..." : "Connecting..."}
+            className="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#2c5364] focus:border-transparent transition-all duration-200 disabled:bg-gray-100 disabled:cursor-not-allowed"
+            disabled={connectionStatus !== 'HEALTHY'}
+            autoComplete="off"
+            spellCheck="true"
           />
           <button
             onClick={sendMessage}
@@ -451,16 +565,26 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
             )}
           </button>
         </div>
-        {connectionStatus !== 'HEALTHY' && (
-          <p className={`text-xs mt-1 flex items-center ${
-            connectionStatus === 'CHECKING' ? 'text-yellow-500' : 'text-red-500'
-          }`}>
-            <div className={`w-2 h-2 rounded-full mr-1 ${
-              connectionStatus === 'CHECKING' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-            }`}></div>
-            {connectionStatus === 'CHECKING' ? 'Connecting...' : 'Connection lost. Trying to reconnect...'}
-          </p>
-        )}
+        {/* Connection Status and Typing Indicator */}
+        <div className="flex items-center justify-between mt-1">
+          {connectionStatus !== 'HEALTHY' && (
+            <p className={`text-xs flex items-center ${
+              connectionStatus === 'CHECKING' ? 'text-yellow-500' : 'text-red-500'
+            }`}>
+              <div className={`w-2 h-2 rounded-full mr-1 ${
+                connectionStatus === 'CHECKING' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+              }`}></div>
+              {connectionStatus === 'CHECKING' ? 'Connecting...' : 'Connection lost. Trying to reconnect...'}
+            </p>
+          )}
+          
+          {isTyping && connectionStatus === 'HEALTHY' && (
+            <p className="text-xs text-gray-500 flex items-center">
+              <span className="animate-pulse mr-1">●</span>
+              You are typing...
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

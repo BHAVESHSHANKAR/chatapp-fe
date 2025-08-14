@@ -6,6 +6,7 @@ import chatAnimation from '../assets/animations/Chat.json';
 import webSocketService from '../services/websocket';
 import ChatWindow from '../components/ChatWindow';
 import connectionStatusService from '../services/connectionStatus';
+import userActivityService from '../services/userActivity';
 import ProfileImage from '../components/ProfileImage';
 import ProfileEditModal from '../components/ProfileEditModal';
 
@@ -20,11 +21,19 @@ function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [showProfilePopup, setShowProfilePopup] = useState(false);
-  const [selectedFriend, setSelectedFriend] = useState(null);
-  const [activeSection, setActiveSection] = useState('dashboard'); // 'dashboard', 'friends', or 'chats'
+  const [selectedFriend, setSelectedFriend] = useState(() => {
+    // Restore selected friend from localStorage
+    const stored = localStorage.getItem('selectedFriend');
+    return stored ? JSON.parse(stored) : null;
+  });
+  const [activeSection, setActiveSection] = useState(() => {
+    // Restore active section from localStorage or default to 'dashboard'
+    return localStorage.getItem('activeSection') || 'dashboard';
+  }); // 'dashboard', 'friends', or 'chats'
   const [connectionStatus, setConnectionStatus] = useState('CHECKING');
   const [showProfileEditModal, setShowProfileEditModal] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [friendStatuses, setFriendStatuses] = useState(new Map());
 
   useEffect(() => {
     // Get current user from local storage
@@ -54,6 +63,18 @@ function Home() {
         
         setFriends(friendsResponse.data);
         setPendingRequests(pendingResponse.data);
+        
+        // Initialize friend statuses
+        const statusMap = new Map();
+        friendsResponse.data.forEach(friend => {
+          const friendId = friend.sender?.username !== currentUser?.username ? friend.sender?.id : friend.receiver?.id;
+          if (friendId) {
+            const status = userActivityService.getUserStatus(friendId);
+            statusMap.set(friendId, status);
+          }
+        });
+        setFriendStatuses(statusMap);
+        
       } catch (error) {
         console.error('Error loading data:', error);
       } finally {
@@ -81,6 +102,33 @@ function Home() {
     };
   }, []);
 
+  // Listen for friend status changes
+  useEffect(() => {
+    const statusListeners = new Map();
+    
+    friends.forEach(friend => {
+      const friendId = friend.sender?.username !== user?.username ? friend.sender?.id : friend.receiver?.id;
+      if (friendId) {
+        const handleStatusChange = (statusData) => {
+          setFriendStatuses(prev => {
+            const newMap = new Map(prev);
+            newMap.set(friendId, statusData);
+            return newMap;
+          });
+        };
+        
+        userActivityService.addStatusListener(friendId, handleStatusChange);
+        statusListeners.set(friendId, handleStatusChange);
+      }
+    });
+
+    return () => {
+      statusListeners.forEach((listener, friendId) => {
+        userActivityService.removeStatusListener(friendId, listener);
+      });
+    };
+  }, [friends, user]);
+
   // Handle click outside to close profile popup and chat
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -93,6 +141,7 @@ function Home() {
       if (activeSection === 'friends' && selectedFriend && event.target.closest('.main-content-area') && 
           !event.target.closest('.chat-area') && !event.target.closest('.friends-list-item')) {
         setSelectedFriend(null);
+        localStorage.removeItem('selectedFriend');
       }
     };
 
@@ -106,6 +155,7 @@ function Home() {
            setShowProfilePopup(false);
          } else if (activeSection === 'friends' && selectedFriend) {
            setSelectedFriend(null);
+           localStorage.removeItem('selectedFriend');
          }
        }
     };
@@ -119,9 +169,18 @@ function Home() {
     };
   }, [showProfilePopup, selectedFriend, activeSection]);
 
+  const handleSectionChange = (section) => {
+    setActiveSection(section);
+    localStorage.setItem('activeSection', section);
+    setIsMobileSidebarOpen(false);
+  };
+
   const handleLogout = () => {
     webSocketService.disconnect();
     authService.logout();
+    // Clear stored data on logout
+    localStorage.removeItem('activeSection');
+    localStorage.removeItem('selectedFriend');
     navigate('/auth');
   };
 
@@ -187,11 +246,17 @@ function Home() {
     const friendName = friend.sender?.username !== user?.username ? friend.sender?.username : friend.receiver?.username;
     const friendProfileImageUrl = friend.sender?.username !== user?.username ? friend.sender?.profileImageUrl : friend.receiver?.profileImageUrl;
     
-    setSelectedFriend({
+    const selectedFriendData = {
       id: friendId,
       username: friendName,
       profileImageUrl: friendProfileImageUrl
-    });
+    };
+    
+    setSelectedFriend(selectedFriendData);
+    // Persist selected friend to localStorage
+    localStorage.setItem('selectedFriend', JSON.stringify(selectedFriendData));
+    // Also ensure we're in the friends section when selecting a friend
+    handleSectionChange('friends');
   };
 
   if (loading) {
@@ -274,10 +339,7 @@ function Home() {
         <div className="flex-1 flex lg:flex-col lg:items-center lg:space-y-8 flex-col space-y-2 w-full lg:w-auto">
           {/* Dashboard Icon */}
           <button 
-            onClick={() => {
-              setActiveSection('dashboard');
-              setIsMobileSidebarOpen(false);
-            }}
+            onClick={() => handleSectionChange('dashboard')}
             className={`
               lg:w-14 lg:h-14 w-full lg:rounded-full rounded-lg px-4 py-3 lg:px-0 lg:py-0
               ${activeSection === 'dashboard' 
@@ -295,10 +357,7 @@ function Home() {
           
           {/* Friends Icon */}
           <button 
-            onClick={() => {
-              setActiveSection('friends');
-              setIsMobileSidebarOpen(false);
-            }}
+            onClick={() => handleSectionChange('friends')}
             className={`
               lg:w-14 lg:h-14 w-full lg:rounded-full rounded-lg px-4 py-3 lg:px-0 lg:py-0
               ${activeSection === 'friends' 
@@ -316,10 +375,7 @@ function Home() {
           
           {/* Chats Icon */}
           <button 
-            onClick={() => {
-              setActiveSection('chats');
-              setIsMobileSidebarOpen(false);
-            }}
+            onClick={() => handleSectionChange('chats')}
             className={`
               lg:w-14 lg:h-14 w-full lg:rounded-full rounded-lg px-4 py-3 lg:px-0 lg:py-0
               ${activeSection === 'chats' 
@@ -456,7 +512,7 @@ function Home() {
                 <p className="text-gray-600 mb-6 lg:mb-8 text-sm lg:text-base">Connect with friends and start chatting!</p>
                 
                 <button 
-                  onClick={() => setActiveSection('friends')}
+                  onClick={() => handleSectionChange('friends')}
                   className="bg-gradient-to-r from-[#0F2027] to-[#2c5364] text-white px-4 lg:px-6 py-2 lg:py-3 rounded-lg font-medium hover:shadow-lg transition-all duration-300 text-sm lg:text-base"
                 >
                   Connect with Friends
@@ -478,21 +534,35 @@ function Home() {
                         const friendName = friend.sender?.username !== user?.username 
                           ? friend.sender?.username 
                           : friend.receiver?.username;
+                        const friendId = friend.sender?.username !== user?.username ? friend.sender?.id : friend.receiver?.id;
+                        const friendStatus = friendStatuses.get(friendId) || { status: 'offline' };
                         
                         return (
                           <li key={friend.id} className="py-4 flex items-center justify-between hover:bg-gray-50 rounded-lg px-3 transition-colors friends-list-item">
                             <div className="flex items-center">
-                              <ProfileImage 
-                                user={{ 
-                                  username: friendName, 
-                                  profileImageUrl: friend.sender?.username !== user?.username ? friend.sender?.profileImageUrl : friend.receiver?.profileImageUrl 
-                                }} 
-                                size="md" 
-                                showOnlineStatus={true}
-                              />
+                              <div className="relative">
+                                <ProfileImage 
+                                  user={{ 
+                                    username: friendName, 
+                                    profileImageUrl: friend.sender?.username !== user?.username ? friend.sender?.profileImageUrl : friend.receiver?.profileImageUrl 
+                                  }} 
+                                  size="md"
+                                />
+                                {/* Online status indicator */}
+                                <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white ${
+                                  friendStatus.status === 'online' ? 'bg-green-400' : 'bg-gray-400'
+                                }`}></div>
+                              </div>
                               <div className="ml-3">
                                 <p className="text-sm font-medium text-gray-900">{friendName}</p>
-                                <p className="text-xs text-gray-500">Online</p>
+                                <p className={`text-xs flex items-center ${
+                                  friendStatus.status === 'online' ? 'text-green-600' : 'text-gray-500'
+                                }`}>
+                                  <span className={`w-2 h-2 rounded-full mr-1 ${
+                                    friendStatus.status === 'online' ? 'bg-green-400' : 'bg-gray-400'
+                                  }`}></span>
+                                  {friendStatus.status === 'online' ? 'online' : 'offline'}
+                                </p>
                               </div>
                             </div>
                             <button 
@@ -510,7 +580,7 @@ function Home() {
                     <div className="text-center py-6 bg-gray-50 rounded-lg">
                       <p className="text-gray-500 mb-3">You don't have any friends yet.</p>
                       <button 
-                        onClick={() => setActiveSection('friends')}
+                        onClick={() => handleSectionChange('friends')}
                         className="bg-gradient-to-r from-[#0F2027] to-[#2c5364] text-white px-4 py-2 rounded-lg text-sm font-medium hover:shadow-lg transition-all duration-300"
                       >
                         Find Friends
@@ -659,7 +729,10 @@ function Home() {
                       key={`${selectedFriend.id}-${activeSection}`}
                       currentUser={user}
                       selectedFriend={selectedFriend}
-                      onClose={() => setSelectedFriend(null)}
+                      onClose={() => {
+                        setSelectedFriend(null);
+                        localStorage.removeItem('selectedFriend');
+                      }}
                     />
                   </div>
                 )}

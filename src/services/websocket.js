@@ -14,28 +14,35 @@ class WebSocketService {
   }
 
   connect(username, onConnected, onError) {
-    // Create STOMP client
+    // Create STOMP client with optimized settings
     this.stompClient = new Client({
-      webSocketFactory: () => new SockJS(import.meta.env.VITE_API_URL_WS),
+      webSocketFactory: () => new SockJS(import.meta.env.VITE_API_URL_WS, null, {
+        timeout: 10000,
+        info: {
+          websocket: true,
+          cookie_needed: false
+        }
+      }),
       connectHeaders: {
         username: username
       },
-      debug: (str) => {
-        // Uncomment for debugging
-        // console.log('STOMP: ' + str);
+      debug: () => {
+        // Disabled for cleaner console
       },
-      reconnectDelay: 5000,
-      heartbeatIncoming: 4000,
-      heartbeatOutgoing: 4000,
+      reconnectDelay: 2000,  // Faster reconnection
+      heartbeatIncoming: 10000,  // Optimized heartbeat
+      heartbeatOutgoing: 10000,
+      connectionTimeout: 10000,  // Connection timeout
+      maxWebSocketChunkSize: 8 * 1024,  // Optimized chunk size
     });
 
     // Set up event handlers
     this.stompClient.onConnect = (frame) => {
-      console.log('✅ WebSocket Connected:', frame);
+      console.log('🔗 WebSocket Connected');
       this.connected = true;
       this.reconnectAttempts = 0;
       
-      // Subscribe to user-specific message queue
+      // Subscribe to user-specific message queue immediately
       this.subscribeToUserMessages(username);
       
       // Update connection status
@@ -47,7 +54,6 @@ class WebSocketService {
     };
 
     this.stompClient.onStompError = (frame) => {
-      console.error('❌ STOMP error:', frame);
       this.connected = false;
       connectionStatusService.checkStatus();
       
@@ -57,7 +63,6 @@ class WebSocketService {
     };
 
     this.stompClient.onWebSocketError = (error) => {
-      console.error('❌ WebSocket error:', error);
       this.connected = false;
       connectionStatusService.checkStatus();
       
@@ -67,7 +72,7 @@ class WebSocketService {
     };
 
     this.stompClient.onDisconnect = () => {
-      console.log('🔌 Disconnected from WebSocket');
+      console.log('🔌 WebSocket Disconnected');
       this.connected = false;
       connectionStatusService.checkStatus();
     };
@@ -80,15 +85,32 @@ class WebSocketService {
 
   subscribeToUserMessages(username) {
     if (this.stompClient && this.connected) {
-      console.log('📡 Subscribing to messages for user:', username);
       
-      // Subscribe to private messages
+      // Subscribe to private messages with optimized handling
       const messageSubscription = this.stompClient.subscribe(
         `/user/${username}/queue/messages`,
         (message) => {
-          console.log('📨 Received message:', message.body);
-          const chatMessage = JSON.parse(message.body);
-          this.handleMessage('message', chatMessage);
+          try {
+            const chatMessage = JSON.parse(message.body);
+            // Process message immediately for real-time feel
+            this.handleMessage('message', chatMessage);
+          } catch (error) {
+            // Silent error handling
+          }
+        },
+        { ack: 'client' }  // Client acknowledgment for reliability
+      );
+
+      // Subscribe to message updates (for database sync)
+      const updateSubscription = this.stompClient.subscribe(
+        `/user/${username}/queue/message-update`,
+        (message) => {
+          try {
+            const chatMessage = JSON.parse(message.body);
+            this.handleMessage('message-update', chatMessage);
+          } catch (error) {
+            // Silent error handling
+          }
         }
       );
 
@@ -96,8 +118,12 @@ class WebSocketService {
       const typingSubscription = this.stompClient.subscribe(
         `/user/${username}/queue/typing`,
         (message) => {
-          const typingMessage = JSON.parse(message.body);
-          this.handleMessage('typing', typingMessage);
+          try {
+            const typingMessage = JSON.parse(message.body);
+            this.handleMessage('typing', typingMessage);
+          } catch (error) {
+            // Silent error handling
+          }
         }
       );
 
@@ -105,12 +131,17 @@ class WebSocketService {
       const errorSubscription = this.stompClient.subscribe(
         `/user/${username}/queue/errors`,
         (message) => {
-          const errorMessage = JSON.parse(message.body);
-          this.handleMessage('error', errorMessage);
+          try {
+            const errorMessage = JSON.parse(message.body);
+            this.handleMessage('error', errorMessage);
+          } catch (error) {
+            // Silent error handling
+          }
         }
       );
 
       this.subscriptions.set('messages', messageSubscription);
+      this.subscriptions.set('message-updates', updateSubscription);
       this.subscriptions.set('typing', typingSubscription);
       this.subscriptions.set('errors', errorSubscription);
     }
@@ -118,14 +149,27 @@ class WebSocketService {
 
   sendMessage(message) {
     if (this.stompClient && this.connected) {
-      console.log('📤 Sending message:', message);
-      this.stompClient.publish({
-        destination: '/app/chat.sendMessage',
-        body: JSON.stringify(message)
-      });
-      return true;
+      try {
+        // Add timestamp for immediate processing
+        message.timestamp = new Date().toISOString();
+        
+        this.stompClient.publish({
+          destination: '/app/chat.sendMessage',
+          body: JSON.stringify(message),
+          headers: {
+            'content-type': 'application/json'
+          }
+        });
+        
+        // Debug log for successful send
+        console.log('✅ Message sent successfully');
+        return true;
+      } catch (error) {
+        console.error('❌ Error sending message:', error);
+        return false;
+      }
     } else {
-      console.error('❌ WebSocket not connected');
+      console.warn('⚠️ WebSocket not connected, cannot send message');
       return false;
     }
   }
