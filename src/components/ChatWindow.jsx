@@ -129,11 +129,11 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
           }
         });
         
-        // Mark as read if message is from friend (debounced)
+        // Mark as read if message is from friend (immediate for real-time feel)
         if (message.senderId === selectedFriend.id) {
-          setTimeout(() => {
-            chatService.markAsRead(selectedFriend.id, currentUser.id).catch(console.error);
-          }, 100);
+          chatService.markAsRead(selectedFriend.id, currentUser.id).catch(() => {
+            // Silent fail - don't disrupt real-time messaging
+          });
         }
       }
     };
@@ -176,7 +176,15 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
     };
 
     const handleError = (errorMessage) => {
-      // Silent error handling - could show toast notification here
+      // Show user-friendly error notification
+      console.error('Chat error:', errorMessage);
+      
+      // Remove any pending messages that might have failed
+      setMessages(prev => prev.filter(msg => !msg.pending));
+      setSending(false);
+      
+      // Show alert with error message
+      alert(`Message failed: ${errorMessage.content || 'Unknown error'}`);
     };
 
     webSocketService.addMessageHandler('message', handleNewMessage);
@@ -269,13 +277,13 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
         const success = webSocketService.sendMessage(message);
         
         if (success) {
-          // Set shorter timeout for better UX
+          // Very short timeout for real-time feel
           setTimeout(() => {
             setMessages(prev => prev.map(msg => 
               msg.tempId === tempId ? { ...msg, pending: false } : msg
             ));
             setSending(false);
-          }, 1000);
+          }, 200);  // Much faster for real-time feel
         } else {
           throw new Error('Failed to send via WebSocket');
         }

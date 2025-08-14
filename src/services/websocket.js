@@ -9,12 +9,16 @@ class WebSocketService {
     this.subscriptions = new Map();
     this.messageHandlers = new Map();
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
+    this.maxReconnectAttempts = 10;  // More reconnect attempts
     this.reconnectDelay = 1000;
+    this.healthCheckInterval = null;
+    this.username = null;
   }
 
   connect(username, onConnected, onError) {
-    // Create STOMP client with optimized settings
+    this.username = username;
+    
+    // Create STOMP client with real-time optimized settings
     this.stompClient = new Client({
       webSocketFactory: () => new SockJS(import.meta.env.VITE_API_URL_WS, null, {
         timeout: 10000,
@@ -29,21 +33,23 @@ class WebSocketService {
       debug: () => {
         // Disabled for cleaner console
       },
-      reconnectDelay: 2000,  // Faster reconnection
-      heartbeatIncoming: 10000,  // Optimized heartbeat
-      heartbeatOutgoing: 10000,
-      connectionTimeout: 10000,  // Connection timeout
-      maxWebSocketChunkSize: 8 * 1024,  // Optimized chunk size
+      reconnectDelay: 1000,  // Very fast reconnection for real-time
+      heartbeatIncoming: 5000,   // Fast heartbeat for real-time
+      heartbeatOutgoing: 5000,
+      connectionTimeout: 5000,   // Shorter timeout
+      maxWebSocketChunkSize: 16 * 1024,  // Larger chunk size for better performance
     });
 
     // Set up event handlers
     this.stompClient.onConnect = (frame) => {
-      console.log('🔗 WebSocket Connected');
       this.connected = true;
       this.reconnectAttempts = 0;
       
       // Subscribe to user-specific message queue immediately
       this.subscribeToUserMessages(username);
+      
+      // Start health check for real-time reliability
+      this.startHealthCheck();
       
       // Update connection status
       connectionStatusService.checkStatus();
@@ -72,9 +78,17 @@ class WebSocketService {
     };
 
     this.stompClient.onDisconnect = () => {
-      console.log('🔌 WebSocket Disconnected');
       this.connected = false;
+      this.stopHealthCheck();
       connectionStatusService.checkStatus();
+      
+      // Auto-reconnect for real-time reliability
+      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        setTimeout(() => {
+          this.reconnectAttempts++;
+          this.connect(this.username, null, null);
+        }, this.reconnectDelay);
+      }
     };
 
     // Activate the client
@@ -86,7 +100,7 @@ class WebSocketService {
   subscribeToUserMessages(username) {
     if (this.stompClient && this.connected) {
       
-      // Subscribe to private messages with optimized handling
+      // Subscribe to private messages with real-time optimized handling
       const messageSubscription = this.stompClient.subscribe(
         `/user/${username}/queue/messages`,
         (message) => {
@@ -94,6 +108,11 @@ class WebSocketService {
             const chatMessage = JSON.parse(message.body);
             // Process message immediately for real-time feel
             this.handleMessage('message', chatMessage);
+            
+            // Acknowledge message receipt for reliability
+            if (message.ack) {
+              message.ack();
+            }
           } catch (error) {
             // Silent error handling
           }
@@ -150,6 +169,17 @@ class WebSocketService {
   sendMessage(message) {
     if (this.stompClient && this.connected) {
       try {
+        // Validate message before sending
+        if (!message || !message.content || !message.content.trim()) {
+          console.error('Cannot send empty message');
+          return false;
+        }
+        
+        if (!message.senderUsername || !message.receiverUsername) {
+          console.error('Missing sender or receiver username');
+          return false;
+        }
+        
         // Add timestamp for immediate processing
         message.timestamp = new Date().toISOString();
         
@@ -157,19 +187,18 @@ class WebSocketService {
           destination: '/app/chat.sendMessage',
           body: JSON.stringify(message),
           headers: {
-            'content-type': 'application/json'
+            'content-type': 'application/json',
+            'priority': '9'  // High priority for real-time messaging
           }
         });
         
-        // Debug log for successful send
-        console.log('✅ Message sent successfully');
         return true;
       } catch (error) {
-        console.error('❌ Error sending message:', error);
+        console.error('Error sending message:', error);
         return false;
       }
     } else {
-      console.warn('⚠️ WebSocket not connected, cannot send message');
+      console.error('WebSocket not connected');
       return false;
     }
   }
@@ -220,6 +249,8 @@ class WebSocketService {
   }
 
   disconnect() {
+    this.stopHealthCheck();
+    
     if (this.stompClient) {
       // Unsubscribe from all subscriptions
       this.subscriptions.forEach((subscription) => {
@@ -235,8 +266,32 @@ class WebSocketService {
     }
   }
 
+  startHealthCheck() {
+    // Check connection health every 10 seconds for real-time reliability
+    this.healthCheckInterval = setInterval(() => {
+      if (this.stompClient && this.connected) {
+        try {
+          // Send a ping to keep connection alive
+          this.stompClient.publish({
+            destination: '/app/ping',
+            body: JSON.stringify({ type: 'ping', timestamp: Date.now() })
+          });
+        } catch (error) {
+          // Silent health check failure
+        }
+      }
+    }, 10000);
+  }
+
+  stopHealthCheck() {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+  }
+
   isConnected() {
-    return this.connected;
+    return this.connected && this.stompClient && this.stompClient.connected;
   }
 }
 
