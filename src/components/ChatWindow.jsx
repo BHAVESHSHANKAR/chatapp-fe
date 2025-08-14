@@ -82,6 +82,37 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
     scrollToBottom();
   }, [messages, friendTyping]);
 
+  // Handle visibility change to refresh messages when user comes back
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && currentUser && selectedFriend) {
+        // Reload messages when user comes back to the tab
+        loadMessages();
+        markMessagesAsRead();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentUser, selectedFriend]);
+
+  // Periodic refresh to ensure messages are always up to date
+  useEffect(() => {
+    if (!currentUser || !selectedFriend) return;
+
+    const refreshInterval = setInterval(() => {
+      // Only refresh if WebSocket is not connected or if we haven't received messages recently
+      if (!webSocketService.isConnected()) {
+        loadMessages();
+      }
+    }, 10000); // Refresh every 10 seconds as fallback
+
+    return () => clearInterval(refreshInterval);
+  }, [currentUser, selectedFriend]);
+
   // Listen for user activity status changes
   useEffect(() => {
     if (selectedFriend) {
@@ -100,12 +131,15 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
   useEffect(() => {
     // Set up WebSocket message handlers with optimized processing
     const handleNewMessage = (message) => {
+      console.log('📨 New message received:', message);
+      
       // Only process messages between current user and selected friend
       if (
         currentUser && selectedFriend &&
         ((message.senderId === currentUser.id && message.receiverId === selectedFriend.id) ||
         (message.senderId === selectedFriend.id && message.receiverId === currentUser.id))
       ) {
+        console.log('✅ Message is for current conversation, updating UI');
         setMessages(prev => {
           // Check if message already exists to prevent duplicates
           const existingIndex = prev.findIndex(m => 
@@ -139,6 +173,8 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
             // Silent fail - don't disrupt real-time messaging
           });
         }
+      } else {
+        console.log('❌ Message not for current conversation, ignoring');
       }
     };
 
@@ -208,7 +244,7 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
       webSocketService.removeMessageHandler('typing', handleTyping);
       webSocketService.removeMessageHandler('error', handleError);
     };
-  }, []); // Remove dependencies to prevent handler recreation
+  }, [currentUser?.id, selectedFriend?.id]); // Add dependencies to ensure handlers update
 
   const loadMessages = async () => {
     try {

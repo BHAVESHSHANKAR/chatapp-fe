@@ -236,14 +236,19 @@ class WebSocketService {
   }
 
   handleMessage(type, message) {
+    console.log(`📨 WebSocket received ${type}:`, message);
     if (this.messageHandlers.has(type)) {
-      this.messageHandlers.get(type).forEach(handler => {
+      const handlers = this.messageHandlers.get(type);
+      console.log(`🔄 Processing ${handlers.length} handlers for ${type}`);
+      handlers.forEach(handler => {
         try {
           handler(message);
         } catch (error) {
           console.error('Error in message handler:', error);
         }
       });
+    } else {
+      console.log(`⚠️ No handlers found for message type: ${type}`);
     }
   }
 

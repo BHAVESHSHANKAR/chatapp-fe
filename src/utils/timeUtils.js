@@ -52,7 +52,15 @@ export const getActivityStatus = (lastSeen) => {
 };
 
 export const formatMessageTime = (timestamp) => {
+  if (!timestamp) return '';
+  
   const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  
+  // Check if date is valid
+  if (isNaN(date.getTime())) {
+    return '';
+  }
+  
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -60,12 +68,35 @@ export const formatMessageTime = (timestamp) => {
   const diffInDays = Math.floor((today - messageDate) / (1000 * 60 * 60 * 24));
   
   if (diffInDays === 0) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // Today - show only time
+    return date.toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: false 
+    });
   } else if (diffInDays === 1) {
-    return `Yesterday ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    // Yesterday
+    return `Yesterday ${date.toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: false 
+    })}`;
   } else if (diffInDays < 7) {
-    return date.toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+    // This week - show day and time
+    return `${date.toLocaleDateString([], { weekday: 'short' })} ${date.toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: false 
+    })}`;
   } else {
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    // Older - show date and time
+    return `${date.toLocaleDateString([], { 
+      month: 'short', 
+      day: 'numeric' 
+    })} ${date.toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: false 
+    })}`;
   }
 };
