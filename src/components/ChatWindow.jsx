@@ -14,7 +14,7 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
   const [friendTyping, setFriendTyping] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('HEALTHY'); // Start optimistic
+  const [connectionStatus, setConnectionStatus] = useState('CHECKING'); // Start with checking
   const [userStatus, setUserStatus] = useState({ status: 'offline', lastSeen: null });
 
   const messagesEndRef = useRef(null);
@@ -58,8 +58,11 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
       setConnectionStatus(wsConnected ? 'HEALTHY' : 'CHECKING');
     };
     
+    // Initial check
+    checkWebSocketStatus();
+    
     // Check WebSocket status periodically
-    const wsCheckInterval = setInterval(checkWebSocketStatus, 5000);
+    const wsCheckInterval = setInterval(checkWebSocketStatus, 2000); // More frequent checks
     
     return () => {
       connectionStatusService.removeListener(handleStatusChange);
@@ -99,8 +102,9 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
     const handleNewMessage = (message) => {
       // Only process messages between current user and selected friend
       if (
-        (message.senderId === currentUser.id && message.receiverId === selectedFriend.id) ||
-        (message.senderId === selectedFriend.id && message.receiverId === currentUser.id)
+        currentUser && selectedFriend &&
+        ((message.senderId === currentUser.id && message.receiverId === selectedFriend.id) ||
+        (message.senderId === selectedFriend.id && message.receiverId === currentUser.id))
       ) {
         setMessages(prev => {
           // Check if message already exists to prevent duplicates
@@ -130,7 +134,7 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
         });
         
         // Mark as read if message is from friend (immediate for real-time feel)
-        if (message.senderId === selectedFriend.id) {
+        if (selectedFriend && currentUser && message.senderId === selectedFriend.id) {
           chatService.markAsRead(selectedFriend.id, currentUser.id).catch(() => {
             // Silent fail - don't disrupt real-time messaging
           });
@@ -139,27 +143,33 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
     };
 
     const handleMessageUpdate = (message) => {
-      // Handle database sync updates
-      setMessages(prev => {
-        const existingIndex = prev.findIndex(m => 
-          m.tempId && m.content === message.content && m.senderId === message.senderId
-        );
-        
-        if (existingIndex !== -1) {
-          const updatedMessages = [...prev];
-          updatedMessages[existingIndex] = {
-            ...message,
-            timestamp: new Date(message.timestamp),
-            pending: false
-          };
-          return updatedMessages;
-        }
-        return prev;
-      });
+      // Handle database sync updates - only for current conversation
+      if (
+        currentUser && selectedFriend &&
+        ((message.senderId === currentUser.id && message.receiverId === selectedFriend.id) ||
+        (message.senderId === selectedFriend.id && message.receiverId === currentUser.id))
+      ) {
+        setMessages(prev => {
+          const existingIndex = prev.findIndex(m => 
+            m.tempId && m.content === message.content && m.senderId === message.senderId
+          );
+          
+          if (existingIndex !== -1) {
+            const updatedMessages = [...prev];
+            updatedMessages[existingIndex] = {
+              ...message,
+              timestamp: new Date(message.timestamp),
+              pending: false
+            };
+            return updatedMessages;
+          }
+          return prev;
+        });
+      }
     };
 
     const handleTyping = (typingMessage) => {
-      if (typingMessage.senderUsername === selectedFriend.username) {
+      if (selectedFriend && typingMessage.senderUsername === selectedFriend.username) {
         const isTypingNow = typingMessage.type === 'TYPING';
         setFriendTyping(isTypingNow);
         
@@ -198,7 +208,7 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
       webSocketService.removeMessageHandler('typing', handleTyping);
       webSocketService.removeMessageHandler('error', handleError);
     };
-  }, [currentUser, selectedFriend]);
+  }, []); // Remove dependencies to prevent handler recreation
 
   const loadMessages = async () => {
     try {
@@ -289,7 +299,32 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
         }
         
       } else {
-        throw new Error('WebSocket not connected');
+        // Fallback to REST API if WebSocket is not connected
+        const restMessage = {
+          content: messageContent,
+          senderUsername: currentUser.username,
+          receiverUsername: selectedFriend.username,
+          senderId: currentUser.id,
+          receiverId: selectedFriend.id,
+          messageType: 'TEXT'
+        };
+        
+        // Send via REST API
+        const response = await chatService.sendMessage(restMessage);
+        
+        if (response.data) {
+          // Update optimistic message with real data
+          setMessages(prev => prev.map(msg => 
+            msg.tempId === tempId ? { 
+              ...response.data, 
+              timestamp: new Date(response.data.timestamp),
+              pending: false 
+            } : msg
+          ));
+          setSending(false);
+        } else {
+          throw new Error('Failed to send via REST API');
+        }
       }
     } catch (error) {
       // Remove optimistic message on error
@@ -297,10 +332,7 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
       setSending(false);
       
       // Show user-friendly error
-      const errorMsg = connectionStatus === 'HEALTHY' ? 
-        'Failed to send message. Please try again.' : 
-        'Connection lost. Please wait for reconnection.';
-      alert(errorMsg);
+      alert('Failed to send message. Please try again.');
     }
     
     // Stop typing indicator
@@ -468,7 +500,7 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
             const showDateSeparator = shouldShowDateSeparator(message, messages[index - 1]);
             
             return (
-              <div key={message.id}>
+              <div key={message.id || message.tempId || `msg-${index}`}>
                 {showDateSeparator && (
                   <div className="flex justify-center my-4">
                     <span className="bg-gray-200 text-gray-600 text-xs px-3 py-1 rounded-full">
@@ -552,15 +584,14 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
             onKeyDown={handleKeyPress}
             onFocus={handleInputFocus}
             onBlur={handleInputBlur}
-            placeholder={connectionStatus === 'HEALTHY' ? "Type a message..." : "Connecting..."}
-            className="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#2c5364] focus:border-transparent transition-all duration-200 disabled:bg-gray-100 disabled:cursor-not-allowed"
-            disabled={connectionStatus !== 'HEALTHY'}
+            placeholder="Type a message..."
+            className="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#2c5364] focus:border-transparent transition-all duration-200"
             autoComplete="off"
             spellCheck="true"
           />
           <button
             onClick={sendMessage}
-            disabled={!newMessage.trim() || sending || connectionStatus !== 'HEALTHY'}
+            disabled={!newMessage.trim() || sending}
             className="bg-gradient-to-r from-[#0F2027] to-[#2c5364] text-white px-6 py-2 rounded-lg font-medium hover:shadow-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
           >
             {sending ? (

@@ -114,10 +114,9 @@ class WebSocketService {
               message.ack();
             }
           } catch (error) {
-            // Silent error handling
+            console.error('Error processing message:', error);
           }
-        },
-        { ack: 'client' }  // Client acknowledgment for reliability
+        }
       );
 
       // Subscribe to message updates (for database sync)

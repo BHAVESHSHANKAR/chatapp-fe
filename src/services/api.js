@@ -93,6 +93,9 @@ const chatService = {
   getMessages: (userId1, userId2, page = 0, size = 50) => {
     return api.get(`/chat/messages?userId1=${userId1}&userId2=${userId2}&page=${page}&size=${size}`);
   },
+  sendMessage: (message) => {
+    return api.post('/chat/send', message);
+  },
   markAsRead: (senderId, receiverId) => {
     return api.post(`/chat/mark-read?senderId=${senderId}&receiverId=${receiverId}`);
   },
