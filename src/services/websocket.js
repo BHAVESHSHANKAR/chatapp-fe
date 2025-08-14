@@ -18,10 +18,10 @@ class WebSocketService {
   connect(username, onConnected, onError) {
     this.username = username;
     
-    // Create STOMP client with real-time optimized settings
+    // Create STOMP client with mobile-optimized settings
     this.stompClient = new Client({
       webSocketFactory: () => new SockJS(import.meta.env.VITE_API_URL_WS, null, {
-        timeout: 10000,
+        timeout: 15000, // Longer timeout for mobile networks
         info: {
           websocket: true,
           cookie_needed: false
@@ -33,15 +33,16 @@ class WebSocketService {
       debug: () => {
         // Disabled for cleaner console
       },
-      reconnectDelay: 1000,  // Very fast reconnection for real-time
-      heartbeatIncoming: 5000,   // Fast heartbeat for real-time
-      heartbeatOutgoing: 5000,
-      connectionTimeout: 5000,   // Shorter timeout
-      maxWebSocketChunkSize: 16 * 1024,  // Larger chunk size for better performance
+      reconnectDelay: 2000,  // Slightly longer for mobile stability
+      heartbeatIncoming: 10000,   // Longer heartbeat for mobile networks
+      heartbeatOutgoing: 10000,
+      connectionTimeout: 10000,   // Longer timeout for mobile
+      maxWebSocketChunkSize: 8 * 1024,  // Smaller chunks for mobile compatibility
     });
 
     // Set up event handlers
     this.stompClient.onConnect = (frame) => {
+      console.log('✅ WebSocket connected successfully');
       this.connected = true;
       this.reconnectAttempts = 0;
       
@@ -60,6 +61,7 @@ class WebSocketService {
     };
 
     this.stompClient.onStompError = (frame) => {
+      console.error('❌ WebSocket STOMP error:', frame);
       this.connected = false;
       connectionStatusService.checkStatus();
       
@@ -69,6 +71,7 @@ class WebSocketService {
     };
 
     this.stompClient.onWebSocketError = (error) => {
+      console.error('❌ WebSocket connection error:', error);
       this.connected = false;
       connectionStatusService.checkStatus();
       
@@ -99,6 +102,7 @@ class WebSocketService {
 
   subscribeToUserMessages(username) {
     if (this.stompClient && this.connected) {
+      console.log(`🔔 Subscribing to messages for user: ${username}`);
       
       // Subscribe to private messages with real-time optimized handling
       const messageSubscription = this.stompClient.subscribe(
@@ -106,6 +110,7 @@ class WebSocketService {
         (message) => {
           try {
             const chatMessage = JSON.parse(message.body);
+            console.log('📨 Received message via WebSocket:', chatMessage);
             // Process message immediately for real-time feel
             this.handleMessage('message', chatMessage);
             
@@ -236,10 +241,8 @@ class WebSocketService {
   }
 
   handleMessage(type, message) {
-    console.log(`📨 WebSocket received ${type}:`, message);
     if (this.messageHandlers.has(type)) {
       const handlers = this.messageHandlers.get(type);
-      console.log(`🔄 Processing ${handlers.length} handlers for ${type}`);
       handlers.forEach(handler => {
         try {
           handler(message);
@@ -247,8 +250,6 @@ class WebSocketService {
           console.error('Error in message handler:', error);
         }
       });
-    } else {
-      console.log(`⚠️ No handlers found for message type: ${type}`);
     }
   }
 

@@ -67,36 +67,29 @@ export const formatMessageTime = (timestamp) => {
   
   const diffInDays = Math.floor((today - messageDate) / (1000 * 60 * 60 * 24));
   
+  // Format time with better mobile compatibility
+  const formatTime = (d) => {
+    const hours = d.getHours().toString().padStart(2, '0');
+    const minutes = d.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+  
   if (diffInDays === 0) {
     // Today - show only time
-    return date.toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false 
-    });
+    return formatTime(date);
   } else if (diffInDays === 1) {
     // Yesterday
-    return `Yesterday ${date.toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false 
-    })}`;
+    return `Yesterday ${formatTime(date)}`;
   } else if (diffInDays < 7) {
     // This week - show day and time
-    return `${date.toLocaleDateString([], { weekday: 'short' })} ${date.toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false 
-    })}`;
+    const dayName = date.toLocaleDateString([], { weekday: 'short' });
+    return `${dayName} ${formatTime(date)}`;
   } else {
     // Older - show date and time
-    return `${date.toLocaleDateString([], { 
+    const dateStr = date.toLocaleDateString([], { 
       month: 'short', 
       day: 'numeric' 
-    })} ${date.toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false 
-    })}`;
+    });
+    return `${dateStr} ${formatTime(date)}`;
   }
 };

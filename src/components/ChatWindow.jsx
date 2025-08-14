@@ -131,15 +131,12 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
   useEffect(() => {
     // Set up WebSocket message handlers with optimized processing
     const handleNewMessage = (message) => {
-      console.log('📨 New message received:', message);
-      
       // Only process messages between current user and selected friend
       if (
         currentUser && selectedFriend &&
         ((message.senderId === currentUser.id && message.receiverId === selectedFriend.id) ||
         (message.senderId === selectedFriend.id && message.receiverId === currentUser.id))
       ) {
-        console.log('✅ Message is for current conversation, updating UI');
         setMessages(prev => {
           // Check if message already exists to prevent duplicates
           const existingIndex = prev.findIndex(m => 
@@ -173,8 +170,6 @@ const ChatWindow = ({ currentUser, selectedFriend, onClose }) => {
             // Silent fail - don't disrupt real-time messaging
           });
         }
-      } else {
-        console.log('❌ Message not for current conversation, ignoring');
       }
     };
 

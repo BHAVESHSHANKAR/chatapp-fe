@@ -21,15 +21,8 @@ function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [showProfilePopup, setShowProfilePopup] = useState(false);
-  const [selectedFriend, setSelectedFriend] = useState(() => {
-    // Restore selected friend from localStorage
-    const stored = localStorage.getItem('selectedFriend');
-    return stored ? JSON.parse(stored) : null;
-  });
-  const [activeSection, setActiveSection] = useState(() => {
-    // Restore active section from localStorage or default to 'dashboard'
-    return localStorage.getItem('activeSection') || 'dashboard';
-  }); // 'dashboard', 'friends', or 'chats'
+  const [selectedFriend, setSelectedFriend] = useState(null);
+  const [activeSection, setActiveSection] = useState('dashboard'); // Always start with dashboard
   const [connectionStatus, setConnectionStatus] = useState('CHECKING');
   const [showProfileEditModal, setShowProfileEditModal] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -178,9 +171,10 @@ function Home() {
   const handleLogout = () => {
     webSocketService.disconnect();
     authService.logout();
-    // Clear stored data on logout
+    // Clear all stored data on logout
     localStorage.removeItem('activeSection');
     localStorage.removeItem('selectedFriend');
+    localStorage.clear(); // Clear everything to prevent cross-user data
     navigate('/auth');
   };
 
